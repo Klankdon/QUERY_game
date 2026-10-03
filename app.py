@@ -192,17 +192,41 @@ class QueryGameEngine:
         return True
 
     def draw_grid(self):
-        """Renders the top-down sector grid overlay."""
         grid_size = 40
         start_x = 40
         start_y = 40
         
+        # Draw background grid lines...
         for x in range(0, 16):
             for y in range(0, 12):
                 rect = pygame.Rect(start_x + (x * grid_size), start_y + (y * grid_size), grid_size - 2, grid_size - 2)
                 pygame.draw.rect(self.screen, COLOR_GRID, rect, 1)
 
-        self.load_assets()
+        # Draw Player Graphic (or fallback rect)
+        p_screen_x = start_x + (self.player_x * grid_size) + 4
+        p_screen_y = start_y + (self.player_y * grid_size) + 4
+        
+        if self.player_img:
+            self.screen.blit(self.player_img, (p_screen_x, p_screen_y))
+        else:
+            p_rect = pygame.Rect(p_screen_x, p_screen_y, 32, 32)
+            pygame.draw.rect(self.screen, COLOR_ACCENT, p_rect)
+
+        # Draw Hostile Entities with Sprites
+        try:
+            self.cursor.execute("SELECT position_x, position_y, hp FROM hostile_mobs WHERE hp > 0")
+            mobs = self.cursor.fetchall()
+            for mx, my, hp in mobs:
+                m_screen_x = start_x + (mx * grid_size) + 4
+                m_screen_y = start_y + (my * grid_size) + 4
+                
+                if self.mob_img:
+                    self.screen.blit(self.mob_img, (m_screen_x, m_screen_y))
+                else:
+                    m_rect = pygame.Rect(m_screen_x, m_screen_y, 32, 32)
+                    pygame.draw.rect(self.screen, COLOR_DANGER, m_rect)
+        except sqlite3.Error:
+            pass
 
     def load_assets(self):
         """Loads and scales pixel art or chibi sprite graphics."""
