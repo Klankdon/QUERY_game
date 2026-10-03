@@ -92,6 +92,35 @@ class QueryGameEngine:
         """)
         self.conn.commit()
 
+    def roll_loot_drop(self, zone_tier):
+        """Generates a random procedural loot drop based on zone difficulty."""
+        loot_table = [
+            {"item": "Scrap CRT Deck Mk.I", "rarity": "Common", "slot": "HUD", "weight": 60},
+            {"item": "Overclocked Heat Sink", "rarity": "Uncommon", "slot": "MOD", "weight": 25},
+            {"item": "Corrupted Subnet Wire", "rarity": "Rare", "slot": "COMPONENT", "weight": 10},
+            {"item": "Black Hat Armband Fragment", "rarity": "Legendary", "slot": "ARMBAND", "weight": 5}
+        ]
+        
+        # Weighted RNG selection
+        roll = random.randint(1, 100)
+        cumulative = 0
+        for entry in loot_table:
+            cumulative += entry["weight"]
+            if roll <= cumulative:
+                self.add_to_inventory(entry)
+                self.console_history.append(f"[LOOT ACQUIRED] Found {entry['rarity']} {entry['item']}!")
+                return entry
+                
+        return None
+
+    def add_to_inventory(self, item_data):
+        """Inserts a dropped item into the SQLite inventory table."""
+        self.cursor.execute(
+            "INSERT INTO inventory (item_name, rarity, slot_type) VALUES (?, ?, ?)",
+            (item_data["item"], item_data["rarity"], item_data["slot"])
+        )
+        self.conn.commit()
+
     def execute_spell(self, query_str):
         """Evaluates player SQL input as a dynamic spell execution against world state."""
         self.console_history.append(f"QUERY> {query_str}")
