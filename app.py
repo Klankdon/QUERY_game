@@ -92,14 +92,41 @@ class QueryGameEngine:
         """)
         self.conn.commit()
 
-    def roll_loot_drop(self, zone_tier):
-        """Generates a random procedural loot drop based on zone difficulty."""
+    def roll_loot_drop(self, zone_tier=1):
+        """Generates a procedural loot drop scaled by zone tier (1: Basic, 2: Mid, 3: High)."""
         loot_table = [
-            {"item": "Scrap CRT Deck Mk.I", "rarity": "Common", "slot": "HUD", "weight": 60},
-            {"item": "Overclocked Heat Sink", "rarity": "Uncommon", "slot": "MOD", "weight": 25},
-            {"item": "Corrupted Subnet Wire", "rarity": "Rare", "slot": "COMPONENT", "weight": 10},
-            {"item": "Black Hat Armband Fragment", "rarity": "Legendary", "slot": "ARMBAND", "weight": 5}
+            # Tier 1: Basic
+            {"item": "Scrap CRT Deck Mk.I", "rarity": "Common", "slot": "HUD", "tier": 1, "weight": 50},
+            {"item": "Frayed Copper Interface", "rarity": "Common", "slot": "CABLE", "tier": 1, "weight": 35},
+            
+            # Tier 2: Mid-Level
+            {"item": "Overclocked Heat Sink", "rarity": "Uncommon", "slot": "MOD", "tier": 2, "weight": 12},
+            {"item": "Shielded Subnet Cable", "rarity": "Uncommon", "slot": "CABLE", "tier": 2, "weight": 8},
+            
+            # Tier 3: High-Level
+            {"item": "Subquery Processing Core", "rarity": "Rare", "slot": "HUD", "tier": 3, "weight": 3},
+            {"item": "Black Hat Root Console", "rarity": "Epic", "slot": "DECK", "tier": 3, "weight": 1}
         ]
+        
+        # Filter items available for this zone tier or below
+        available_loot = [item for item in loot_table if item["tier"] <= zone_tier]
+        
+        total_weight = sum(item["weight"] for item in available_loot)
+        roll = random.randint(1, total_weight)
+        
+        cumulative = 0
+        for entry in available_loot:
+            cumulative += entry["weight"]
+            if roll <= cumulative:
+                self.cursor.execute(
+                    "INSERT INTO inventory (item_name, rarity, slot_type) VALUES (?, ?, ?)",
+                    (entry["item"], entry["rarity"], entry["slot"])
+                )
+                self.conn.commit()
+                self.console_history.append(f"[LOOT ACQUIRED] ({entry['rarity']}) {entry['item']}")
+                return entry
+                
+        return None
         
         # Weighted RNG selection
         roll = random.randint(1, 100)
