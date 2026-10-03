@@ -2,6 +2,7 @@ import pygame
 import sqlite3
 import sys
 import os
+import random
 
 # Initialize Pygame
 pygame.init()
@@ -42,6 +43,7 @@ class QueryGameEngine:
         # Player & Input State
         self.player_x = 5
         self.player_y = 5
+        self.current_zone_tier = 1
         self.current_input = ""
         self.console_history = [
             "[SYSTEM] QUERY OS v1.0.4 initialized.",
@@ -49,6 +51,9 @@ class QueryGameEngine:
             "[SYSTEM] Type SQL spells in console below (e.g., SELECT * FROM hostile_mobs);"
         ]
         
+        # Load Assets
+        self.load_assets()
+
     def init_world_database(self):
         """Initializes game tables, active hostiles, and sector grid schema."""
         self.cursor.executescript("""
@@ -92,6 +97,18 @@ class QueryGameEngine:
         """)
         self.conn.commit()
 
+    def load_assets(self):
+        """Loads and scales pixel art or chibi sprite graphics."""
+        self.player_img = None
+        self.mob_img = None
+        
+        try:
+            if os.path.exists("assets/chibi_char.png"):
+                img = pygame.image.load("assets/chibi_char.png").convert_alpha()
+                self.player_img = pygame.transform.scale(img, (32, 32))
+        except pygame.error as e:
+            print(f"[WARNING] Could not load player asset: {e}")
+
     def roll_loot_drop(self, zone_tier=1):
         """Generates a procedural loot drop scaled by zone tier (1: Basic, 2: Mid, 3: High)."""
         loot_table = [
@@ -108,34 +125,18 @@ class QueryGameEngine:
             {"item": "Black Hat Root Console", "rarity": "Epic", "slot": "DECK", "tier": 3, "weight": 1}
         ]
         
-        # Filter items available for this zone tier or below
         available_loot = [item for item in loot_table if item["tier"] <= zone_tier]
-        
         total_weight = sum(item["weight"] for item in available_loot)
+        if total_weight == 0:
+            return None
+            
         roll = random.randint(1, total_weight)
-        
         cumulative = 0
         for entry in available_loot:
             cumulative += entry["weight"]
             if roll <= cumulative:
-                self.cursor.execute(
-                    "INSERT INTO inventory (item_name, rarity, slot_type) VALUES (?, ?, ?)",
-                    (entry["item"], entry["rarity"], entry["slot"])
-                )
-                self.conn.commit()
-                self.console_history.append(f"[LOOT ACQUIRED] ({entry['rarity']}) {entry['item']}")
-                return entry
-                
-        return None
-        
-        # Weighted RNG selection
-        roll = random.randint(1, 100)
-        cumulative = 0
-        for entry in loot_table:
-            cumulative += entry["weight"]
-            if roll <= cumulative:
                 self.add_to_inventory(entry)
-                self.console_history.append(f"[LOOT ACQUIRED] Found {entry['rarity']} {entry['item']}!")
+                self.console_history.append(f"[LOOT ACQUIRED] ({entry['rarity']}) {entry['item']}")
                 return entry
                 
         return None
@@ -168,7 +169,6 @@ class QueryGameEngine:
         except sqlite3.Error as e:
             self.console_history.append(f"  -> [SYNTAX ERROR] Fizzled: {e}")
             
-        # Keep history window capped
         if len(self.console_history) > 15:
             self.console_history.pop(0)
 
@@ -184,35 +184,45 @@ class QueryGameEngine:
                         self.current_input = ""
                 elif event.key == pygame.K_BACKSPACE:
                     self.current_input = self.current_input[:-1]
+                # Player Grid Movement Controls
+                elif event.key in (pygame.K_w, pygame.K_UP):
+                    if self.y > 0:
+                        self.y -= 1
+                elif event.key in (pygame.K_s, pygame.K_DOWN):
+                    if self.y < 11:
+                        self.y += 1
+                elif event.key in (pygame.K_a, pygame.K_LEFT):
+                    if self.x > 0:
+                        self.x -= 1
+                elif event.key in (pygame.K_d, pygame.K_RIGHT):
+                    if self.x < 15:
+                        self.x += 1
                 else:
-                    # Capture printable characters for query console
                     if event.unicode.isprintable():
                         self.current_input += event.unicode
-                        
-        return True
 
     def draw_grid(self):
         grid_size = 40
         start_x = 40
         start_y = 40
         
-        # Draw background grid lines...
+        # Draw background grid lines
         for x in range(0, 16):
             for y in range(0, 12):
                 rect = pygame.Rect(start_x + (x * grid_size), start_y + (y * grid_size), grid_size - 2, grid_size - 2)
                 pygame.draw.rect(self.screen, COLOR_GRID, rect, 1)
 
-        # Draw Player Graphic (or fallback rect)
+        # Draw Player
         p_screen_x = start_x + (self.player_x * grid_size) + 4
         p_screen_y = start_y + (self.player_y * grid_size) + 4
         
         if self.player_img:
             self.screen.blit(self.player_img, (p_screen_x, p_screen_y))
         else:
-            p_rect = pygame.Rect(p_screen_x, p_screen_y, 32, 32)
+            p_rect = pygame.Rect(p_screen_x, p_screen_y, grid_size - 12, grid_size - 12)
             pygame.draw.rect(self.screen, COLOR_ACCENT, p_rect)
 
-        # Draw Hostile Entities with Sprites
+        # Draw Hostile Entities from Database
         try:
             self.cursor.execute("SELECT position_x, position_y, hp FROM hostile_mobs WHERE hp > 0")
             mobs = self.cursor.fetchall()
@@ -223,36 +233,13 @@ class QueryGameEngine:
                 if self.mob_img:
                     self.screen.blit(self.mob_img, (m_screen_x, m_screen_y))
                 else:
-                    m_rect = pygame.Rect(m_screen_x, m_screen_y, 32, 32)
+                    m_rect = pygame.Rect(m_screen_x, m_screen_y, grid_size - 18, grid_size - 18)
                     pygame.draw.rect(self.screen, COLOR_DANGER, m_rect)
-        except sqlite3.Error:
-            pass
-
-    def load_assets(self):
-        """Loads and scales pixel art or chibi sprite graphics."""
-        # Fallback to colored rects if image files are missing during dev
-        self.assets = {}
-        try:
-            self.player_img = pygame.image.load("assets/chibi_player.png").convert_alpha()
-            self.player_img = pygame.transform.scale(self.player_img, (32, 32))
-
-        # Draw Player
-        p_rect = pygame.Rect(start_x + (self.player_x * grid_size) + 5, start_y + (self.player_y * grid_size) + 5, grid_size - 12, grid_size - 12)
-        pygame.draw.rect(self.screen, COLOR_ACCENT, p_rect)
-
-        # Draw Hostile Entities from Database
-        try:
-            self.cursor.execute("SELECT position_x, position_y, hp FROM hostile_mobs WHERE hp > 0")
-            mobs = self.cursor.fetchall()
-            for mx, my, hp in mobs:
-                m_rect = pygame.Rect(start_x + (mx * grid_size) + 8, start_y + (my * grid_size) + 8, grid_size - 18, grid_size - 18)
-                pygame.draw.rect(self.screen, COLOR_DANGER, m_rect)
         except sqlite3.Error:
             pass
 
     def draw_hud(self):
         """Renders the cyberpunk status panels and query terminal."""
-        # Right Panel Background
         panel_rect = pygame.Rect(700, 20, 560, 680)
         pygame.draw.rect(self.screen, COLOR_PANEL, panel_rect)
         pygame.draw.rect(self.screen, COLOR_MUTED, panel_rect, 2)
