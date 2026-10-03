@@ -184,17 +184,17 @@ class QueryGameEngine:
                         self.current_input = ""
                 elif event.key == pygame.K_BACKSPACE:
                     self.current_input = self.current_input[:-1]
-                # Player Grid Movement Controls (fixed to use player_y and player_x)
-                elif event.key in (pygame.K_w, pygame.K_UP):
+                # Relegate movement strictly to Arrow Keys so WASD is free for typing spells
+                elif event.key == pygame.K_UP:
                     if self.player_y > 0:
                         self.player_y -= 1
-                elif event.key in (pygame.K_s, pygame.K_DOWN):
+                elif event.key == pygame.K_DOWN:
                     if self.player_y < 11:
                         self.player_y += 1
-                elif event.key in (pygame.K_a, pygame.K_LEFT):
+                elif event.key == pygame.K_LEFT:
                     if self.player_x > 0:
                         self.player_x -= 1
-                elif event.key in (pygame.K_d, pygame.K_RIGHT):
+                elif event.key == pygame.K_RIGHT:
                     if self.player_x < 15:
                         self.player_x += 1
                 else:
@@ -202,7 +202,7 @@ class QueryGameEngine:
                         self.current_input += event.unicode
                         
         return True
-
+        
     def draw_grid(self):
         grid_size = 40
         start_x = 40
