@@ -202,6 +202,16 @@ class QueryGameEngine:
                 rect = pygame.Rect(start_x + (x * grid_size), start_y + (y * grid_size), grid_size - 2, grid_size - 2)
                 pygame.draw.rect(self.screen, COLOR_GRID, rect, 1)
 
+        self.load_assets()
+
+    def load_assets(self):
+        """Loads and scales pixel art or chibi sprite graphics."""
+        # Fallback to colored rects if image files are missing during dev
+        self.assets = {}
+        try:
+            self.player_img = pygame.image.load("assets/chibi_player.png").convert_alpha()
+            self.player_img = pygame.transform.scale(self.player_img, (32, 32))
+
         # Draw Player
         p_rect = pygame.Rect(start_x + (self.player_x * grid_size) + 5, start_y + (self.player_y * grid_size) + 5, grid_size - 12, grid_size - 12)
         pygame.draw.rect(self.screen, COLOR_ACCENT, p_rect)
