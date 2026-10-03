@@ -32,12 +32,12 @@ This is an **extremely early, bare-bones prototype** serving as our core sandbox
 **Install Dependencies:**
 ##We use Pygame-CE for maximum compatibility:
 
-Bash
+```bash
 pip install pygame-ce
 
 **Run the Game:**
 
-Bash
+```bash
 python app.py
 
 **License**
