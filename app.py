@@ -184,22 +184,24 @@ class QueryGameEngine:
                         self.current_input = ""
                 elif event.key == pygame.K_BACKSPACE:
                     self.current_input = self.current_input[:-1]
-                # Player Grid Movement Controls
+                # Player Grid Movement Controls (fixed to use player_y and player_x)
                 elif event.key in (pygame.K_w, pygame.K_UP):
-                    if self.y > 0:
-                        self.y -= 1
+                    if self.player_y > 0:
+                        self.player_y -= 1
                 elif event.key in (pygame.K_s, pygame.K_DOWN):
-                    if self.y < 11:
-                        self.y += 1
+                    if self.player_y < 11:
+                        self.player_y += 1
                 elif event.key in (pygame.K_a, pygame.K_LEFT):
-                    if self.x > 0:
-                        self.x -= 1
+                    if self.player_x > 0:
+                        self.player_x -= 1
                 elif event.key in (pygame.K_d, pygame.K_RIGHT):
-                    if self.x < 15:
-                        self.x += 1
+                    if self.player_x < 15:
+                        self.player_x += 1
                 else:
                     if event.unicode.isprintable():
                         self.current_input += event.unicode
+                        
+        return True
 
     def draw_grid(self):
         grid_size = 40
