@@ -29,16 +29,16 @@ This is an **extremely early, bare-bones prototype** serving as our core sandbox
    git clone [https://github.com/Klankdon/QUERY_game.git](https://github.com/Klankdon/QUERY_game.git)
    cd QUERY_game
 
-   Install Dependencies:
-We use Pygame-CE for maximum compatibility:
+**Install Dependencies:**
+##We use Pygame-CE for maximum compatibility:
 
 Bash
 pip install pygame-ce
 
-Run the Game:
+**Run the Game:**
 
 Bash
 python app.py
 
-License
+**License**
 This project is licensed under the MIT License to make it as open, accessible, and frictionless as possible for community experimentation, learning, and open-source contributions. See the LICENSE file for details.
