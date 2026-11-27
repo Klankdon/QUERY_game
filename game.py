@@ -14,6 +14,7 @@ import argparse
 import os
 import random
 import sys
+from collections import deque
 
 import pygame
 import sqlglot
@@ -78,6 +79,10 @@ class QueryGameEngine:
         self.cam_x = 0
         self.cam_y = 0
         self._last_terminal_id = None
+        self._mouse_held = False
+        self._move_target = None          # (tx, ty) or None
+        self._next_step_ms = 0
+        self.MOVE_STEP_MS = 110           # ms between auto-walk steps
 
         self.player = {}
         self.mobs = []
@@ -656,6 +661,70 @@ class QueryGameEngine:
         return flat[:22] + ("..." if len(flat) > 22 else "")
 
     # ------------------------------------------- movement
+    def _screen_to_tile(self, sx, sy):
+        if sx >= 700:                     # ignore clicks on the right-hand HUD
+            return None
+        tx = (sx + self.cam_x - GRID_ORIGIN_X) // GRID_SIZE
+        ty = (sy + self.cam_y - GRID_ORIGIN_Y) // GRID_SIZE
+        if 0 <= tx < self.world.width and 0 <= ty < self.world.height:
+            return (tx, ty)
+        return None
+
+    def _set_mouse_target(self, pos, immediate=False):
+        tile = self._screen_to_tile(*pos)
+        if tile is None:
+            return
+        self._move_target = tile
+        if immediate:
+            self._next_step_ms = 0
+
+    def _next_step_toward(self, goal):
+        """BFS shortest path around WALL and CORRUPTED tiles."""
+        start = (self.player["position_x"], self.player["position_y"])
+        if start == goal:
+            return None
+        if self.world.tile_at(*goal) != map_gen.FLOOR:
+            if (abs(goal[0] - start[0]) + abs(goal[1] - start[1]) == 1
+                    and self.world.tile_at(*goal) == map_gen.CORRUPTED):
+                return (goal[0] - start[0], goal[1] - start[1])
+            return None
+
+        queue = deque([start])
+        came_from = {start: None}
+        while queue:
+            cx, cy = queue.popleft()
+            if (cx, cy) == goal:
+                break
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) not in came_from and self.world.tile_at(nx, ny) == map_gen.FLOOR:
+                    came_from[(nx, ny)] = (cx, cy)
+                    queue.append((nx, ny))
+
+        if goal not in came_from:
+            return None
+        cur = goal
+        while came_from[cur] != start:
+            cur = came_from[cur]
+        return (cur[0] - start[0], cur[1] - start[1])
+
+    def _update_mouse_movement(self):
+        if self._mouse_held:
+            self._set_mouse_target(pygame.mouse.get_pos())
+        if not self._move_target:
+            return
+        now = pygame.time.get_ticks()
+        if now < self._next_step_ms:
+            return
+        step = self._next_step_toward(self._move_target)
+        if step is None:
+            self._move_target = None
+            return
+        self.try_move(*step)
+        self._next_step_ms = now + self.MOVE_STEP_MS
+        if (self.player["position_x"], self.player["position_y"]) == self._move_target:
+            self._move_target = None
+
     def try_move(self, dx, dy):
         nx = self.player["position_x"] + dx
         ny = self.player["position_y"] + dy
@@ -732,6 +801,18 @@ class QueryGameEngine:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._mouse_held = True
+                self._set_mouse_target(event.pos, immediate=True)
+                continue
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self._mouse_held = False
+                continue
+            if event.type == pygame.MOUSEMOTION and self._mouse_held:
+                self._set_mouse_target(event.pos)
+                continue
+
             if event.type != pygame.KEYDOWN:
                 continue
 
@@ -743,6 +824,9 @@ class QueryGameEngine:
                 if event.key in self.NUMBER_KEYS:
                     self.bind_spell(self.NUMBER_KEYS[event.key]); continue
                 self.pending_bind = None
+
+            if event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
+                self._move_target = None
 
             if event.key == pygame.K_UP:    self.try_move(0, -1);  continue
             if event.key == pygame.K_DOWN:  self.try_move(0, 1);   continue
@@ -820,6 +904,13 @@ class QueryGameEngine:
                                      (sx, sy, TILE, TILE))
                     pygame.draw.rect(self.screen, (60, 0, 40),
                                      (sx, sy, TILE, TILE), 1)
+
+        if self._move_target:
+            tx, ty = self._move_target
+            if x0 <= tx < x1 and y0 <= ty < y1:
+                sx, sy = self._tile_to_screen(tx, ty)
+                pygame.draw.rect(self.screen, COLOR_ACCENT,
+                                 (sx + 4, sy + 4, TILE - 8, TILE - 8), 1)
 
         # 2. Build Y-sort queue: walls + terminals + mobs + player
         queue = []
@@ -953,6 +1044,7 @@ class QueryGameEngine:
         running = True
         while running:
             running = self.handle_events()
+            self._update_mouse_movement()
             self.screen.fill(COLOR_BG)
             self.draw_world()
             self.draw_hud()
