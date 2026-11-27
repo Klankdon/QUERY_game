@@ -1,2 +1,2 @@
 pygame-ce
-sqlite3
+sqlglot
