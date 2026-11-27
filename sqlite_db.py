@@ -58,11 +58,44 @@ CREATE TABLE spellbook (
     dialect_written TEXT NOT NULL DEFAULT 'sqlite',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-INSERT INTO hostile_mobs (name, hp, armor_class, elemental_weakness, position_x, position_y) VALUES
-    ('Rogue_Daemon_v1', 50, 12, 'LIGHTNING', 8, 4),
-    ('Glitch_Crawler',  30,  8, 'FIRE',      3, 7),
-    ('Subnet_Stalker',  75, 15, 'COLD',     12, 2);
+CREATE TABLE world_map (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    seed INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    spawn_x INTEGER NOT NULL,
+    spawn_y INTEGER NOT NULL
+);
+CREATE TABLE rooms (
+    id INTEGER PRIMARY KEY,
+    template TEXT NOT NULL,
+    name TEXT NOT NULL,
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    w INTEGER NOT NULL,
+    h INTEGER NOT NULL,
+    tier INTEGER NOT NULL DEFAULT 1,
+    corrupted INTEGER NOT NULL DEFAULT 0,
+    visited INTEGER NOT NULL DEFAULT 0,
+    terminal_id INTEGER
+);
+CREATE TABLE terminals (
+    id INTEGER PRIMARY KEY,
+    room_id INTEGER NOT NULL,
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    requires_constructs TEXT NOT NULL DEFAULT '',
+    solved INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE map_tiles (
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    tile_type TEXT NOT NULL,
+    room_id INTEGER,
+    PRIMARY KEY (x, y)
+);
 
 INSERT INTO conduits (zone, status, voltage) VALUES
     ('sector_7_slums', 'frayed', 220),
@@ -106,8 +139,10 @@ class SQLiteAdapter(EngineAdapter):
             "SQLITE_TRANSACTION",
         ) if hasattr(sqlite3, n)
     )
-    GAME_TABLES   = frozenset({"hostile_mobs", "conduits", "inventory",
-                                "player_state", "spellbook"})
+    GAME_TABLES   = frozenset({
+        "hostile_mobs", "conduits", "inventory", "player_state", "spellbook",
+        "world_map", "rooms", "terminals", "map_tiles",
+    })
     WRITE_TABLES  = GAME_TABLES | {"sqlite_sequence"}
     SCHEMA_TABLES = frozenset({"sqlite_master", "sqlite_schema",
                                 "sqlite_temp_master"})
