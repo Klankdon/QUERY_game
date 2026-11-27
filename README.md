@@ -18,6 +18,7 @@ The engine has been split into modular realm adapters with AST-level SQL curricu
 
 ---
 
+Markdown
 ## Architecture
 
 ```text
@@ -29,8 +30,11 @@ QUERY_game/
 ├── game.py           # Pygame loop, HUD workbench, migration engine, and CLI entry point
 ├── assets/           # Sprites (chibi_char.png, chibi_mob.png)
 ├── start.bat         # Windows venv setup & launcher
-└── start.sh          # Linux/macOS venv setup & launcher'''
+└── start.sh          # Linux/macOS venv setup & launcher ```
 
-_______________________________________________________________________________
-**Screenshots & Visual Roadmap:** View progress shots and concept art in the [QUERY Game Assets DeviantArt Gallery](https://www.deviantart.com/dragonsflyartstudio/gallery/103885995/query-game-assets).
+
+Screenshots & Visual Roadmap: View progress shots and concept art in the QUERY Game Assets DeviantArt Gallery.
+https://www.deviantart.com/dragonsflyartstudio/gallery/103885995/query-game-assets
+
+
 
