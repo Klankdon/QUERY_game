@@ -1,44 +1,32 @@
-# QUERY
+# QUERY: The Query That Saved The World
 
-> **A dystopian cyberpunk RPG where database management is magic.** Repair collapsing city infrastructures, collect rare hardware HUDs, assemble black-hat root kits, and cast custom SQL queries as spells.
-
----
-
-## **LOOKING FOR CONTRIBUTORS!**
-
-We are actively building out the codebase for **QUERY**, and open-source contributions, pull requests, and creative ideas are welcome across all layers of the project:
-
-* **Engine & Logic (Python / Pygame):** Expanding grid interactions, spatial query checks, and turn-based event systems.
-* **Database & Schema Design (SQLite):** Designing multi-sector table schemas, dynamic item drops, and complex quest triggers.
-* **Pixel Art & Cyberpunk Assets:** Crafting CRT retro HUD overlays, terminal fonts, chibi characters, and hostile daemon sprites.
+*A dystopian cyberpunk RPG where database management is magic.* Repair collapsing city infrastructures, collect rare hardware HUDs, assemble black-hat root kits, and cast custom SQL queries as spells.
 
 ---
 
-## **Current State (Alpha v0.0.1)**
-This is an **extremely early, bare-bones prototype** serving as our core sandbox foundation:
-* **Grid Movement:** Use the Arrow Keys to walk your character across the 16x12 sector grid.
-* **Live SQLite Workbench:** A functional retro CRT terminal where you can type and execute raw SQL queries against the local database state.
-* **Seed Data:** Pre-loaded tables for hostile mobs, grid conduits, and initial inventory drops.
+## Current State (v0.5 — Multi-Realm Progression)
+
+The engine has been split into modular realm adapters with AST-level SQL curriculum gating (`sqlglot`) and cross-engine migration mechanics:
+
+* **Three Realms & Dialects:**
+  * **DEV (`sqlite`):** Permissive starting sandbox (`query_sqlite.db`).
+  * **STAGING (`mariadb`):** Enforces `ONLY_FULL_GROUP_BY`, strict integer typing, and catches `||` concatenation vs. logical `OR` traps (`query_maria.db`).
+  * **PROD (`postgres`):** Enforces strict grouping/typing and unlocks PostgreSQL-specific constructs like `ILIKE`, `DISTINCT ON`, and JSONB operators (`query_postgres.db`).
+* **Spellbook & Hotbar (`1–9`):** Engrave working queries to hotbar slots `1–9` with dialect provenance (`dialect_written`) and cast them on demand.
+* **Realm Auditing & Migration (`MIGRATE`):** At Level 5+, run `MIGRATE` to audit your spellbook for breaking constructs, strictness violations, and dialect hazards against the next realm, then execute `MIGRATE CONFIRM` to cross over with your player state and spellbook intact.
+* **Grid Movement & Loot:** Navigate the 16x12 sector grid using the Arrow Keys to regenerate mana, cross zone tiers, purge hostile daemons, and roll hardware loot drops.
 
 ---
 
-## **Getting Started Locally**
+## Architecture
 
-1. **Clone the Repository:**
-   ```bash
-   git clone [https://github.com/Klankdon/QUERY_game.git](https://github.com/Klankdon/QUERY_game.git)
-   cd QUERY_game
-
-**Install Dependencies:**
-##We use Pygame-CE for maximum compatibility:
-
-```bash
-pip install pygame-ce
-
-**Run the Game:**
-
-```bash
-python app.py
-
-**License**
-This project is licensed under the MIT License to make it as open, accessible, and frictionless as possible for community experimentation, learning, and open-source contributions. See the LICENSE file for details.
+```text
+QUERY_game/
+├── db.py             # Shared foundation: CONSTRUCTS curriculum, strictness rules, EngineAdapter base
+├── sqlite_db.py      # DEV realm adapter, sandbox authorizer, and SQLite DDL
+├── maria_db.py       # STAGING realm adapter (MariaDB 5.7+ semantics) & MARIADB_DDL_REAL
+├── postgres_db.py    # PROD realm adapter (PostgreSQL semantics) & POSTGRES_DDL_REAL
+├── game.py           # Pygame loop, HUD workbench, migration engine, and CLI entry point
+├── assets/           # Sprites (chibi_char.png, chibi_mob.png)
+├── start.bat         # Windows venv setup & launcher
+└── start.sh          # Linux/macOS venv setup & launcher
