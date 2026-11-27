@@ -32,6 +32,5 @@ QUERY_game/
 └── start.sh          # Linux/macOS venv setup & launcher
 
 _______________________________________________________________________________
+**Screenshots & Visual Roadmap:** View progress shots and concept art in the [QUERY Game Assets DeviantArt Gallery](https://www.deviantart.com/dragonsflyartstudio/gallery/103885995/query-game-assets).
 
-**I have documented Screenshots, and where I want to be at some point saved in my Deviant Art gallery:**
-https://www.deviantart.com/dragonsflyartstudio/gallery/103885995/query-game-assets
