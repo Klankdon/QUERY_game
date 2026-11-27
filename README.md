@@ -30,3 +30,7 @@ QUERY_game/
 ├── assets/           # Sprites (chibi_char.png, chibi_mob.png)
 ├── start.bat         # Windows venv setup & launcher
 └── start.sh          # Linux/macOS venv setup & launcher
+
+
+I have documented Screenshots, and where I want to be at some point saved in my Deviant Art gallery:
+https://www.deviantart.com/dragonsflyartstudio/gallery/103885995/query-game-assets
