@@ -1,4 +1,4 @@
-"""QUERY: The Query That Saved The World -- main game (v0.5)
+"""QUERY: The Query That Saved The World -- main game (v0.6)
 
     python game.py                    # DEV mode (default; SQLite)
     python game.py --realm staging    # STAGING only (MariaDB rules)
@@ -20,18 +20,32 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
+import map_gen
 from db import (
     CONSTRUCTS, STATEMENT_KINDS, SCHEMA_COLUMNS, GRACEFUL_HINTS,
     TIER_NAMES, MIGRATION_UNLOCK_LEVEL,
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
-    GRID_SIZE, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_COLS, GRID_ROWS,
-    COLOR_BG, COLOR_GRID, COLOR_TEXT, COLOR_MUTED, COLOR_ACCENT,
+    GRID_SIZE, GRID_ORIGIN_X, GRID_ORIGIN_Y,
+    COLOR_BG, COLOR_TEXT, COLOR_MUTED, COLOR_ACCENT,
     COLOR_DANGER, COLOR_WARN, COLOR_PANEL, MANA_PER_STEP,
     detect_constructs, detect_dialect_hazards, check_strictness,
 )
 
 
-ZONE_BREAKS = (5, 11)   # x < 5 -> tier 1, 5 <= x < 11 -> tier 2, x >= 11 -> tier 3
+MOB_TEMPLATES = [
+    {"name": "Rogue_Daemon_v1", "hp": 50, "armor_class": 12,
+     "weakness": "LIGHTNING", "tier": 1},
+    {"name": "Glitch_Crawler",  "hp": 30, "armor_class":  8,
+     "weakness": "FIRE",      "tier": 1},
+    {"name": "Subnet_Stalker",  "hp": 75, "armor_class": 15,
+     "weakness": "COLD",      "tier": 2},
+    {"name": "Null_Wraith",     "hp": 90, "armor_class": 16,
+     "weakness": "LIGHTNING", "tier": 3},
+]
+
+
+def WALL_HEIGHT_FACE(_sx, _sy):
+    return map_gen.WALL_HEIGHT
 
 
 class QueryGameEngine:
@@ -40,7 +54,7 @@ class QueryGameEngine:
     def __init__(self, adapter, mode="single"):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("QUERY: The Query That Saved The World [v0.5]")
+        pygame.display.set_caption("QUERY: The Query That Saved The World [v0.6]")
         self.clock = pygame.time.Clock()
         pygame.key.set_repeat(320, 35)
 
@@ -59,6 +73,12 @@ class QueryGameEngine:
             adapter.init_schema(self.conn)
         adapter.post_connect(self.conn)
 
+        # world map first -- player state depends on spawn position
+        self.world = self._world_init_or_load()
+        self.cam_x = 0
+        self.cam_y = 0
+        self._last_terminal_id = None
+
         self.player = {}
         self.mobs = []
         self.hotbar = {}
@@ -71,13 +91,139 @@ class QueryGameEngine:
         self.refresh_hotbar()
 
         modes = "progression" if mode == "all" else "single-realm"
-        self.log(f"[SYSTEM] QUERY OS v1.5.0 :: {adapter.name} / {adapter.dialect} "
+        self.log(f"[SYSTEM] QUERY OS v1.6.0 :: {adapter.name} / {adapter.dialect} "
                  f"({modes})", COLOR_MUTED)
+        self.log(f"[SYSTEM] World seed {self.world.seed} :: "
+                 f"{self.world.width}x{self.world.height} tiles", COLOR_MUTED)
         self.log(f"[SYSTEM] Strictness: {self._rules_summary(adapter)}", COLOR_MUTED)
         self.log("[SYSTEM] Type a query to cast. SELECT is where you begin.",
                  COLOR_ACCENT)
 
         self.load_assets()
+
+    # ------------------------------------------- world persistence
+    def _world_init_or_load(self):
+        self.cursor.execute("SELECT COUNT(*) FROM world_map")
+        if self.cursor.fetchone()[0] == 0:
+            world = map_gen.generate()
+            self._persist_world(world)
+            self._spawn_mobs(world)
+        else:
+            world = self._load_world()
+            if not world:
+                world = map_gen.generate()
+                self._persist_world(world)
+                self._spawn_mobs(world)
+        return world
+
+    def _persist_world(self, world):
+        self.cursor.execute(
+            "INSERT INTO world_map (id, seed, width, height, spawn_x, spawn_y) "
+            "VALUES (1, ?, ?, ?, ?, ?)",
+            (world.seed, world.width, world.height, world.spawn_x, world.spawn_y),
+        )
+        for r in world.rooms:
+            self.cursor.execute(
+                "INSERT INTO rooms (id, template, name, x, y, w, h, tier, corrupted, "
+                "visited, terminal_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (r.id, r.template, r.name, r.x, r.y, r.w, r.h, r.tier,
+                 int(r.corrupted), int(r.visited), r.terminal_id),
+            )
+        for t in world.terminals:
+            self.cursor.execute(
+                "INSERT INTO terminals (id, room_id, x, y, kind, prompt, "
+                "requires_constructs, solved) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                (t.id, t.room_id, t.x, t.y, t.kind, t.prompt, t.requires_constructs),
+            )
+        for y in range(world.height):
+            for x in range(world.width):
+                r = world.room_at(x, y)
+                self.cursor.execute(
+                    "INSERT INTO map_tiles (x, y, tile_type, room_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    (x, y, world.tiles[y][x], r.id if r else None),
+                )
+        # seed the player at spawn
+        self.cursor.execute(
+            "UPDATE player_state SET position_x = ?, position_y = ?, zone_tier = ? "
+            "WHERE id = 1",
+            (world.spawn_x, world.spawn_y, 1),
+        )
+        self.conn.commit()
+
+    def _load_world(self):
+        self.cursor.execute(
+            "SELECT seed, width, height, spawn_x, spawn_y FROM world_map WHERE id = 1"
+        )
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+        seed, w, h, spawn_x, spawn_y = row
+
+        tiles = [[map_gen.VOID for _ in range(w)] for _ in range(h)]
+        self.cursor.execute("SELECT x, y, tile_type FROM map_tiles")
+        for x, y, tt in self.cursor.fetchall():
+            tiles[y][x] = tt
+
+        rooms = []
+        self.cursor.execute(
+            "SELECT id, template, name, x, y, w, h, tier, corrupted, visited, terminal_id "
+            "FROM rooms ORDER BY id"
+        )
+        for r in self.cursor.fetchall():
+            rooms.append(map_gen.Room(
+                id=r[0], template=r[1], name=r[2], x=r[3], y=r[4], w=r[5], h=r[6],
+                tier=r[7], corrupted=bool(r[8]), visited=bool(r[9]),
+                terminal_id=r[10] if r[10] is not None else -1,
+            ))
+
+        terminals = []
+        self.cursor.execute(
+            "SELECT id, room_id, x, y, kind, prompt, requires_constructs, solved "
+            "FROM terminals ORDER BY id"
+        )
+        for t in self.cursor.fetchall():
+            terminals.append(map_gen.Terminal(
+                id=t[0], room_id=t[1], x=t[2], y=t[3],
+                kind=t[4], prompt=t[5], requires_constructs=t[6], solved=bool(t[7]),
+            ))
+
+        return map_gen.WorldMap(seed=seed, width=w, height=h,
+                                spawn_x=spawn_x, spawn_y=spawn_y,
+                                tiles=tiles, rooms=rooms, terminals=terminals)
+
+    def _spawn_mobs(self, world):
+        rng = random.Random(world.seed * 7 + 13)
+        candidate_rooms = [r for r in world.rooms if r.id != 0]
+        rng.shuffle(candidate_rooms)
+        n = min(len(candidate_rooms), 4)
+        placed = 0
+        for room in candidate_rooms[:n]:
+            for _attempt in range(20):
+                tx = rng.randint(room.x, room.x + room.w - 1)
+                ty = rng.randint(room.y, room.y + room.h - 1)
+                if world.tile_at(tx, ty) != map_gen.FLOOR:
+                    continue
+                if world.terminal_at(tx, ty):
+                    continue
+                if tx == world.spawn_x and ty == world.spawn_y:
+                    continue
+                template = rng.choice(
+                    [m for m in MOB_TEMPLATES if m["tier"] <= room.tier]
+                    or [MOB_TEMPLATES[0]]
+                )
+                self.cursor.execute(
+                    "INSERT INTO hostile_mobs (name, hp, armor_class, "
+                    "elemental_weakness, position_x, position_y) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (template["name"], template["hp"], template["armor_class"],
+                     template["weakness"], tx, ty),
+                )
+                placed += 1
+                break
+        self.conn.commit()
+        print(f"[MAP] seed {world.seed} :: {len(world.rooms)} rooms, "
+              f"{len(world.terminals)} terminals, {placed} mobs placed")
 
     # ------------------------------------------- realm helpers
     @property
@@ -103,7 +249,6 @@ class QueryGameEngine:
 
     @staticmethod
     def _make_adapter(tier):
-        # Lazy import: only the module for the target tier is ever loaded.
         if tier == 1:
             from sqlite_db import SQLiteAdapter
             return SQLiteAdapter("query_sqlite.db")
@@ -128,7 +273,36 @@ class QueryGameEngine:
         )
         self.mobs = self.cursor.fetchall()
 
+        # track current room (for tier + narration)
+        room = self.world.room_at(self.player["position_x"], self.player["position_y"])
+        if room and not room.visited:
+            room.visited = True
+            self.cursor.execute("UPDATE rooms SET visited = 1 WHERE id = ?", (room.id,))
+            self.conn.commit()
+            self.log(f"[ENTER] {room.name} (tier {room.tier}"
+                     f"{', corrupted' if room.corrupted else ''})", COLOR_ACCENT)
+
+        self._check_terminal_proximity()
         self._check_migration_stub()
+
+    def _check_terminal_proximity(self):
+        px, py = self.player["position_x"], self.player["position_y"]
+        nearest = None
+        for t in self.world.terminals:
+            if t.solved:
+                continue
+            d = abs(t.x - px) + abs(t.y - py)
+            if d <= 1:
+                nearest = t
+                break
+        if nearest and nearest.id != self._last_terminal_id:
+            self._last_terminal_id = nearest.id
+            self.log(f"[TERMINAL] {nearest.kind.upper()}", COLOR_ACCENT)
+            self.log(f"  {nearest.prompt}", COLOR_TEXT)
+            if nearest.requires_constructs:
+                self.log(f"  requires: {nearest.requires_constructs}", COLOR_MUTED)
+        elif nearest is None:
+            self._last_terminal_id = None
 
     def refresh_hotbar(self):
         self.cursor.execute(
@@ -272,7 +446,6 @@ class QueryGameEngine:
                  "the new realm.", COLOR_MUTED)
 
     def _cross_realm(self, target_adapter):
-        # Snapshot player + spells before closing the old connection.
         self.cursor.execute(
             "SELECT id, handle, level, hp, max_hp, mana, max_mana, "
             "position_x, position_y, zone_tier FROM player_state"
@@ -286,7 +459,6 @@ class QueryGameEngine:
 
         self.conn.close()
 
-        # Fresh target realm; sandbox is installed AFTER restore.
         self.adapter = target_adapter
         self.conn = self.adapter.connect(reinitialize=True)
         self.cursor = self.conn.cursor()
@@ -306,6 +478,7 @@ class QueryGameEngine:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)", s
             )
         self.conn.commit()
+        self.world = self._world_init_or_load()
         self.adapter.post_connect(self.conn)     # sandbox ON
         self._migrations_announced = set()
         self.refresh_state()
@@ -345,7 +518,6 @@ class QueryGameEngine:
             self.log("  [FORBIDDEN GLYPH] That is not a spell this deck can "
                      "channel.", COLOR_WARN); return
 
-        # Dialect note (non-blocking) -- the || trap
         if self.current_dialect == "mariadb" and "||" in query:
             self.log("  [DIALECT NOTE] '||' is logical OR here, not concatenation. "
                      "Use CONCAT(a, b) if you meant to join strings.", COLOR_WARN)
@@ -484,26 +656,25 @@ class QueryGameEngine:
         return flat[:22] + ("..." if len(flat) > 22 else "")
 
     # ------------------------------------------- movement
-    @staticmethod
-    def _zone_at(x):
-        if x < ZONE_BREAKS[0]: return 1
-        if x < ZONE_BREAKS[1]: return 2
-        return 3
-
     def try_move(self, dx, dy):
         nx = self.player["position_x"] + dx
         ny = self.player["position_y"] + dy
-        if not (0 <= nx < GRID_COLS and 0 <= ny < GRID_ROWS):
+        tile = self.world.tile_at(nx, ny)
+        if tile != map_gen.FLOOR:
+            if tile == map_gen.CORRUPTED:
+                self.log("[VOID] The Nothingness is unyielding here. Mend the "
+                         "schema to restore passage.", COLOR_WARN)
             return
-        zone = self._zone_at(nx)
+        room = self.world.room_at(nx, ny)
+        zone = room.tier if room else self.player["zone_tier"]
         self.cursor.execute(
             "UPDATE player_state SET position_x = ?, position_y = ?, "
             "mana = MIN(max_mana, mana + ?), zone_tier = ? WHERE id = 1",
             (nx, ny, MANA_PER_STEP, zone),
         )
         self.conn.commit()
-        if zone != self.player["zone_tier"]:
-            self.log(f"[ZONE] Tier {zone} boundary crossed.", COLOR_ACCENT)
+        if room and zone != self.player["zone_tier"]:
+            self.log(f"[ZONE] Entered tier {zone} sector.", COLOR_ACCENT)
         self.refresh_state()
 
     # ------------------------------------------- loot
@@ -605,29 +776,110 @@ class QueryGameEngine:
 
         return True
 
-    # ------------------------------------------- drawing
+    # ------------------------------------------- camera & drawing
+    def _compute_camera(self):
+        TILE = GRID_SIZE
+        view_w, view_h = 700, 720        # left panel is 700px wide
+        px = self.player["position_x"] * TILE + TILE // 2
+        py = self.player["position_y"] * TILE + TILE // 2
+        self.cam_x = max(0, min(px - view_w // 2,
+                                self.world.width * TILE - view_w))
+        self.cam_y = max(0, min(py - view_h // 2,
+                                self.world.height * TILE - view_h))
+
+    def _tile_to_screen(self, tx, ty):
+        return (tx * GRID_SIZE - self.cam_x + GRID_ORIGIN_X,
+                ty * GRID_SIZE - self.cam_y + GRID_ORIGIN_Y)
+
+    def _visible_tile_range(self):
+        TILE = GRID_SIZE
+        x0 = max(0, self.cam_x // TILE - 1)
+        y0 = max(0, self.cam_y // TILE - 1)
+        x1 = min(self.world.width, x0 + (700 // TILE) + 3)
+        y1 = min(self.world.height, y0 + (720 // TILE) + 3)
+        return x0, y0, x1, y1
+
     def draw_world(self):
-        for x in range(GRID_COLS):
-            for y in range(GRID_ROWS):
-                pygame.draw.rect(self.screen, COLOR_GRID, pygame.Rect(
-                    GRID_ORIGIN_X + x * GRID_SIZE,
-                    GRID_ORIGIN_Y + y * GRID_SIZE,
-                    GRID_SIZE - 2, GRID_SIZE - 2), 1)
+        self._compute_camera()
+        TILE = GRID_SIZE
+        x0, y0, x1, y1 = self._visible_tile_range()
+
+        # 1. Floors + corrupted (drawn on the ground plane)
+        for ty in range(y0, y1):
+            for tx in range(x0, x1):
+                tile = self.world.tile_at(tx, ty)
+                sx, sy = self._tile_to_screen(tx, ty)
+                if tile == map_gen.FLOOR:
+                    pygame.draw.rect(self.screen, (22, 26, 34),
+                                     (sx, sy, TILE, TILE))
+                    pygame.draw.rect(self.screen, (30, 36, 48),
+                                     (sx, sy, TILE, TILE), 1)
+                elif tile == map_gen.CORRUPTED:
+                    pulse = int(14 + 8 * abs((pygame.time.get_ticks() % 900) - 450) / 450)
+                    pygame.draw.rect(self.screen, (pulse, 0, pulse // 2 + 4),
+                                     (sx, sy, TILE, TILE))
+                    pygame.draw.rect(self.screen, (60, 0, 40),
+                                     (sx, sy, TILE, TILE), 1)
+
+        # 2. Build Y-sort queue: walls + terminals + mobs + player
+        queue = []
+
+        for ty in range(y0, y1):
+            for tx in range(x0, x1):
+                if self.world.tile_at(tx, ty) == map_gen.WALL:
+                    queue.append(((ty + 1) * TILE, "wall", tx, ty))
+
+        for t in self.world.terminals:
+            if x0 <= t.x < x1 and y0 <= t.y < y1:
+                queue.append(((t.y + 1) * TILE, "terminal", t.x, t.y, t))
+
         for mx, my, _hp in self.mobs:
-            px = GRID_ORIGIN_X + mx * GRID_SIZE + 6
-            py = GRID_ORIGIN_Y + my * GRID_SIZE + 6
-            if self.mob_img:
-                self.screen.blit(self.mob_img, (px, py))
-            else:
-                pygame.draw.rect(self.screen, COLOR_DANGER,
-                                 pygame.Rect(px, py, GRID_SIZE - 22, GRID_SIZE - 22))
-        px = GRID_ORIGIN_X + self.player["position_x"] * GRID_SIZE + 4
-        py = GRID_ORIGIN_Y + self.player["position_y"] * GRID_SIZE + 4
-        if self.player_img:
-            self.screen.blit(self.player_img, (px, py))
-        else:
-            pygame.draw.rect(self.screen, COLOR_ACCENT,
-                             pygame.Rect(px, py, GRID_SIZE - 12, GRID_SIZE - 12))
+            if x0 <= mx < x1 and y0 <= my < y1:
+                queue.append(((my + 1) * TILE, "mob", mx, my))
+
+        queue.append(((self.player["position_y"] + 1) * TILE, "player", None, None))
+
+        queue.sort(key=lambda e: e[0])
+
+        # 3. Draw in Y order
+        for entry in queue:
+            kind = entry[1]
+            if kind == "wall":
+                _y, _k, tx, ty = entry
+                sx, sy = self._tile_to_screen(tx, ty)
+                wh = WALL_HEIGHT_FACE(sx, sy)
+                pygame.draw.rect(self.screen, (40, 46, 58),
+                                 (sx, sy - wh, TILE, wh + TILE))
+                pygame.draw.rect(self.screen, (68, 78, 96),
+                                 (sx, sy - wh, TILE, wh))
+                pygame.draw.line(self.screen, (110, 130, 160),
+                                 (sx, sy - wh), (sx + TILE, sy - wh), 1)
+            elif kind == "terminal":
+                _y, _k, tx, ty, _t = entry
+                sx, sy = self._tile_to_screen(tx, ty)
+                pulse = int(180 + 60 * abs((pygame.time.get_ticks() % 700) - 350) / 350)
+                pygame.draw.rect(self.screen, (0, pulse, min(255, pulse + 40)),
+                                 (sx + 10, sy + TILE - 30, TILE - 20, 24), 0)
+                pygame.draw.rect(self.screen, (0, 255, 200),
+                                 (sx + 10, sy + TILE - 30, TILE - 20, 24), 1)
+            elif kind == "mob":
+                _y, _k, mx, my = entry
+                sx, sy = self._tile_to_screen(mx, my)
+                if self.mob_img:
+                    self.screen.blit(self.mob_img,
+                                     (sx + 6, sy + TILE - self.mob_img.get_height() - 4))
+                else:
+                    pygame.draw.rect(self.screen, COLOR_DANGER,
+                                     (sx + 8, sy + TILE - 28, TILE - 16, TILE - 16))
+            elif kind == "player":
+                px, py = self.player["position_x"], self.player["position_y"]
+                sx, sy = self._tile_to_screen(px, py)
+                if self.player_img:
+                    self.screen.blit(self.player_img,
+                                     (sx + 4, sy + TILE - self.player_img.get_height() - 4))
+                else:
+                    pygame.draw.rect(self.screen, COLOR_ACCENT,
+                                     (sx + 4, sy + TILE - 32, TILE - 12, TILE - 12))
 
     @staticmethod
     def wrap(text, width=62):
@@ -715,7 +967,7 @@ class QueryGameEngine:
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="query",
-        description="QUERY: The Query That Saved The World (v0.5)",
+        description="QUERY: The Query That Saved The World (v0.6)",
         epilog=("Run with no arguments for DEV mode (SQLite, permissive). "
                 "Use --realm to lock into one engine; use --all to progress "
                 "through DEV -> STAGING -> PROD."),
